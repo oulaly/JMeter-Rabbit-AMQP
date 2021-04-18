@@ -2,7 +2,11 @@ package com.zeroclue.jmeter.protocol.amqp;
 
 import com.rabbitmq.client.*;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.jmeter.config.Argument;
+import org.apache.jmeter.config.Arguments;
 import org.apache.jmeter.samplers.AbstractSampler;
+import org.apache.jmeter.testelement.property.PropertyIterator;
+import org.apache.jmeter.testelement.property.TestElementProperty;
 import org.apache.jmeter.testelement.ThreadListener;
 import org.apache.jorphan.logging.LoggingManager;
 import org.apache.log.Logger;
@@ -10,10 +14,9 @@ import org.apache.log.Logger;
 import java.io.IOException;
 import java.security.KeyManagementException;
 import java.security.NoSuchAlgorithmException;
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.Map;
+import java.text.NumberFormat;
+import java.text.ParseException;
+import java.util.*;
 
 public abstract class AMQPSampler extends AbstractSampler implements ThreadListener {
 
@@ -57,6 +60,7 @@ public abstract class AMQPSampler extends AbstractSampler implements ThreadListe
     private static final String QUEUE_EXCLUSIVE = "AMQPSampler.QueueExclusive";
     private static final String QUEUE_AUTO_DELETE = "AMQPSampler.QueueAutoDelete";
     private static final int DEFAULT_HEARTBEAT = 1;
+    private static final String CHANNEL_ARGUMENTS = "AMQPPublisher.ChannelArguments";
 
     private transient ConnectionFactory factory;
     private transient Connection connection;
@@ -122,7 +126,44 @@ public abstract class AMQPSampler extends AbstractSampler implements ThreadListe
         if(getMessageExpires() != null && !getMessageExpires().isEmpty())
             arguments.put("x-expires", getMessageExpiresAsInt());
 
+        // You can explicitly set x-expires, x-message-ttl and other arguments.
+        // Use getChannelArguments().getArgumentsAsMap() to get String value; use argumentsAsMap(getChannelArguments()) to get Object value (Number, Boolean, String).
+        arguments.putAll(argumentsAsMap(getChannelArguments()));
+
         return arguments;
+    }
+
+    private Map<String, Object> argumentsAsMap(Arguments args) {
+        PropertyIterator iter = args.getArguments().iterator();
+        Map<String, Object> argMap = new LinkedHashMap<String, Object>();
+        while (iter.hasNext()) {
+            Argument arg = (Argument) iter.next().getObjectValue();
+            if (!argMap.containsKey(arg.getName())) {
+                String value = arg.getValue();
+                Number numVal = argumentValueAsNumber(value);
+                Boolean boolVal = argumentValueAsBoolean(value);
+                argMap.put(arg.getName(), numVal != null ? numVal : (boolVal != null ? boolVal : value));
+            }
+        }
+        return argMap;
+    }
+
+    private Number argumentValueAsNumber(String value) {
+        if (value == null) {
+            return null;
+        }
+        try {
+            return NumberFormat.getInstance().parse(value);
+        } catch (ParseException e) {
+            return null;
+        }
+    }
+
+    private Boolean argumentValueAsBoolean(String value) {
+        if ("true".equalsIgnoreCase(value) || "false".equalsIgnoreCase(value)) {
+            return Boolean.valueOf(value);
+        }
+        return null;
     }
 
     protected abstract Channel getChannel();
@@ -382,6 +423,14 @@ public abstract class AMQPSampler extends AbstractSampler implements ThreadListe
 
     public void setQueueRedeclare(Boolean content) {
        setProperty(QUEUE_REDECLARE, content);
+    }
+
+    public Arguments getChannelArguments() {
+        return (Arguments) getProperty(CHANNEL_ARGUMENTS).getObjectValue();
+    }
+
+    public void setChannelArguments(Arguments channelArguments) {
+        setProperty(new TestElementProperty(CHANNEL_ARGUMENTS, channelArguments));
     }
 
     protected void cleanup() {
